@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environment
+venv/
+env/
+.venv/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Flask instance folder (contains runtime files)
+instance/
+
+# SQLite database (optional — if you use sqlite for dev)
+*.sqlite
+*.db
+
+# Environment variables (SECRET KEYS, etc.)
+.env
+.env.*
+*.env
+
+# Logs
+*.log
+
+# IDE / Editor settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Cache
+*.cache
+.cache/
+pip-wheel-metadata/
+.pytest_cache/
+coverage/
+
+# OS / Misc
+.DS_Store
+Thumbs.db
