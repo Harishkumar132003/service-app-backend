@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional, TypedDict
 import bcrypt
 
-Role = Literal["admin", "user", "serviceprovider", "accountant"]
+Role = Literal["admin", "user", "serviceprovider", "accountant", "manager"]
 
 
 class UserDoc(TypedDict, total=False):

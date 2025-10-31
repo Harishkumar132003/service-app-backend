@@ -12,7 +12,7 @@ def create_user():
 	password = data.get('password') or ''
 	role = (data.get('role') or 'user').strip()
 
-	if not email or not password or role not in {'admin','user','serviceprovider','accountant'}:
+	if not email or not password or role not in {'admin','user','serviceprovider','accountant','manager'}:
 		return { 'error': 'Invalid input' }, 400
 
 	db = get_db()
@@ -28,3 +28,14 @@ def create_user():
 		'updated_at': now,
 	})
 	return { 'message': 'User created' }, 201
+
+
+@users_bp.get('')
+def list_users():
+	role = (request.args.get('role') or '').strip().lower()
+	db = get_db()
+	q = {}
+	if role:
+		q['role'] = role
+	users = [ { 'email': u['email'], 'role': u.get('role','user') } for u in db.users.find(q).sort('email', 1) ]
+	return { 'users': users }, 200

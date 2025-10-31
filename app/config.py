@@ -11,6 +11,9 @@ class Config:
 	JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 	JWT_EXPIRES_IN = int(os.getenv("JWT_EXPIRES_IN", "3600"))
 	CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+	UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads")))
+	ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png"}
+	MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024)))
 
 	@staticmethod
 	def jwt_expires_delta() -> timedelta:

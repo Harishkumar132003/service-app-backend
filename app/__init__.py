@@ -4,11 +4,16 @@ from .config import Config
 from .db import init_db
 from .routes.auth import auth_bp
 from .routes.users import users_bp
+from .routes.tickets import tickets_bp
+from .routes.invoices import invoices_bp
+import os
 
 
 def create_app() -> Flask:
 	app = Flask(__name__)
 	app.config.from_object(Config)
+	app.config['MAX_CONTENT_LENGTH'] = Config.MAX_CONTENT_LENGTH
+	os.makedirs(Config.UPLOAD_DIR, exist_ok=True)
 
 	CORS(app, resources={r"/api/*": {"origins": Config.CORS_ORIGINS}})
 
@@ -16,6 +21,8 @@ def create_app() -> Flask:
 
 	app.register_blueprint(auth_bp, url_prefix="/api/auth")
 	app.register_blueprint(users_bp, url_prefix="/api/users")
+	app.register_blueprint(tickets_bp, url_prefix="/api/tickets")
+	app.register_blueprint(invoices_bp, url_prefix="/api/invoices")
 
 	@app.get("/health")
 	def health_check():
