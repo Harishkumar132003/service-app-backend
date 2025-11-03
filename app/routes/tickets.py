@@ -1,8 +1,10 @@
-from flask import Blueprint, request, current_app, send_from_directory
+from flask import Blueprint, request, current_app, send_from_directory, send_file
 from werkzeug.utils import secure_filename
 from bson import ObjectId
 from time import time
 import os
+import base64
+from io import BytesIO
 
 from ..db import get_db
 from ..utils.jwt_utils import require_roles, get_bearer_token, decode_token
@@ -58,6 +60,30 @@ def _save_image(file_storage, prefix: str) -> str:
 	return final_name
 
 
+def _save_image_to_db(file_storage) -> ObjectId:
+	"""Save uploaded image as base64 in DB and return its ObjectId."""
+	if not file_storage:
+		raise ValueError('Missing file')
+	filename = secure_filename(file_storage.filename or '')
+	ext = _resolve_ext(filename, getattr(file_storage, 'mimetype', None))
+	if ext not in _ALLOWED_EXTS:
+		raise ValueError('Unsupported file type')
+	content_type = getattr(file_storage, 'mimetype', None) or 'application/octet-stream'
+	data_bytes = file_storage.read()
+	if not data_bytes:
+		raise ValueError('Empty image')
+	b64 = base64.b64encode(data_bytes).decode('ascii')
+	db = get_db()
+	now = int(time())
+	res = db.images.insert_one({
+		'filename': filename,
+		'content_type': content_type,
+		'data_base64': b64,
+		'created_at': now,
+	})
+	return res.inserted_id
+
+
 @tickets_bp.post('')
 @require_roles(['user'])
 def create_ticket():
@@ -73,10 +99,10 @@ def create_ticket():
     payload = decode_token(token) if token else {}
     email = payload.get('email')
 
-    image_name = None
+    initial_image_id = None
     if image:
         try:
-            image_name = _save_image(image, 'ticket_initial')
+            initial_image_id = _save_image_to_db(image)
         except ValueError as ve:
             return { 'error': str(ve) }, 400
         except Exception:
@@ -89,8 +115,8 @@ def create_ticket():
         'created_by': email,
         'created_at': now,
         'status': 'Submitted',
-        'initial_image': image_name,  # can be None
-        'completion_images': [],
+        'initial_image_id': initial_image_id,  # can be None
+        'completion_image_ids': [],
         'assigned_provider': None,
         'invoice_id': None,
     })
@@ -159,11 +185,18 @@ def list_tickets():
 		obj['id'] = str(obj.pop('_id'))
 		if obj.get('invoice_id') and isinstance(obj['invoice_id'], ObjectId):
 			obj['invoice_id'] = str(obj['invoice_id'])
+			inv = db.invoices.find_one({ '_id': ObjectId(obj['invoice_id']) })
 			# Populate invoice_amount if missing
-			if not obj.get('invoice_amount'):
-				inv = db.invoices.find_one({ '_id': ObjectId(obj['invoice_id']) })
-				if inv and 'amount' in inv:
-					obj['invoice_amount'] = float(inv['amount'])
+			if inv and not obj.get('invoice_amount') and ('amount' in inv) and (inv['amount'] is not None):
+				obj['invoice_amount'] = float(inv['amount'])
+			# Indicate if invoice has an image
+			if inv and inv.get('image_id'):
+				obj['invoice_has_image'] = True
+		# Convert image ObjectIds to strings for the API response
+		if obj.get('initial_image_id') and isinstance(obj['initial_image_id'], ObjectId):
+			obj['initial_image_id'] = str(obj['initial_image_id'])
+		if obj.get('completion_image_ids') and isinstance(obj['completion_image_ids'], list):
+			obj['completion_image_ids'] = [str(x) if isinstance(x, ObjectId) else x for x in obj['completion_image_ids']]
 		tickets.append(obj)
 	
 	return { 'tickets': tickets }, 200
@@ -191,27 +224,27 @@ def assign_ticket(ticket_id: str):
 @tickets_bp.post('/<ticket_id>/complete')
 @require_roles(['serviceprovider'])
 def complete_work(ticket_id: str):
-	db = get_db()
-	files = request.files.getlist('images')
-	if not files:
-		return { 'error': 'At least one completion image is required' }, 400
-	try:
-		_oid = ObjectId(ticket_id)
-	except Exception:
-		return { 'error': 'Invalid ticket id' }, 400
+    db = get_db()
+    files = request.files.getlist('images')
+    if not files:
+        return { 'error': 'At least one completion image is required' }, 400
+    try:
+        _oid = ObjectId(ticket_id)
+    except Exception:
+        return { 'error': 'Invalid ticket id' }, 400
 
-	saved = []
-	for f in files:
-		try:
-			name = _save_image(f, 'ticket_complete')
-			saved.append(name)
-		except ValueError as ve:
-			return { 'error': str(ve) }, 400
-		except Exception:
-			return { 'error': 'Invalid image in upload' }, 400
+    saved_ids = []
+    for f in files:
+        try:
+            img_id = _save_image_to_db(f)
+            saved_ids.append(img_id)
+        except ValueError as ve:
+            return { 'error': str(ve) }, 400
+        except Exception:
+            return { 'error': 'Invalid image in upload' }, 400
 
-	db.tickets.update_one({ '_id': _oid }, { '$set': { 'completion_images': saved, 'status': 'Work Completion' } })
-	return { 'message': 'Work submitted' }, 200
+    db.tickets.update_one({ '_id': _oid }, { '$set': { 'completion_image_ids': saved_ids, 'status': 'Work Completion' } })
+    return { 'message': 'Work submitted' }, 200
 
 
 @tickets_bp.patch('/<ticket_id>/verify')
@@ -230,3 +263,21 @@ def member_verify(ticket_id: str):
 @tickets_bp.get('/uploads/<filename>')
 def serve_upload(filename: str):
 	return send_from_directory(current_app.config['UPLOAD_DIR'], filename)
+
+
+@tickets_bp.get('/images/<image_id>')
+def get_image(image_id: str):
+    """Stream image binary by image ObjectId from images collection."""
+    db = get_db()
+    try:
+        _oid = ObjectId(image_id)
+    except Exception:
+        return { 'error': 'Invalid image id' }, 400
+    doc = db.images.find_one({ '_id': _oid })
+    if not doc:
+        return { 'error': 'Not found' }, 404
+    try:
+        data = base64.b64decode(doc.get('data_base64') or '')
+    except Exception:
+        return { 'error': 'Corrupt image data' }, 500
+    return send_file(BytesIO(data), mimetype=doc.get('content_type') or 'application/octet-stream', download_name=doc.get('filename') or 'image')
