@@ -61,39 +61,41 @@ def _save_image(file_storage, prefix: str) -> str:
 @tickets_bp.post('')
 @require_roles(['user'])
 def create_ticket():
-	db = get_db()
-	category = (request.form.get('category') or '').strip().lower()
-	description = (request.form.get('description') or '').strip()
-	image = request.files.get('image')
-	if category not in CATEGORIES or not description:
-		return { 'error': 'category and description are required' }, 400
-	if not image:
-		return { 'error': 'image is required' }, 400
+    db = get_db()
+    category = (request.form.get('category') or '').strip().lower()
+    description = (request.form.get('description') or '').strip()
+    image = request.files.get('image')
 
-	token = get_bearer_token()
-	payload = decode_token(token) if token else {}
-	email = payload.get('email')
+    if category not in CATEGORIES or not description:
+        return { 'error': 'category and description are required' }, 400
 
-	try:
-		image_name = _save_image(image, 'ticket_initial')
-	except ValueError as ve:
-		return { 'error': str(ve) }, 400
-	except Exception:
-		return { 'error': 'Invalid image' }, 400
+    token = get_bearer_token()
+    payload = decode_token(token) if token else {}
+    email = payload.get('email')
 
-	now = int(time())
-	res = db.tickets.insert_one({
-		'category': category,
-		'description': description,
-		'created_by': email,
-		'created_at': now,
-		'status': 'Submitted',
-		'initial_image': image_name,
-		'completion_images': [],
-		'assigned_provider': None,
-		'invoice_id': None,
-	})
-	return { 'id': str(res.inserted_id), 'status': 'Submitted' }, 201
+    image_name = None
+    if image:
+        try:
+            image_name = _save_image(image, 'ticket_initial')
+        except ValueError as ve:
+            return { 'error': str(ve) }, 400
+        except Exception:
+            return { 'error': 'Invalid image' }, 400
+
+    now = int(time())
+    res = db.tickets.insert_one({
+        'category': category,
+        'description': description,
+        'created_by': email,
+        'created_at': now,
+        'status': 'Submitted',
+        'initial_image': image_name,  # can be None
+        'completion_images': [],
+        'assigned_provider': None,
+        'invoice_id': None,
+    })
+
+    return { 'id': str(res.inserted_id), 'status': 'Submitted' }, 201
 
 
 @tickets_bp.get('')
@@ -104,14 +106,55 @@ def list_tickets():
 	payload = decode_token(token) if token else {}
 	role = payload.get('role')
 	email = payload.get('email')
+	
+	# Build base query with role-based security
 	q = {}
 	if role == 'user':
 		q['created_by'] = email
 	elif role == 'serviceprovider':
 		q['assigned_provider'] = email
+	
+	# Apply additional filters from query parameters
+	status = request.args.get('status', '').strip()
+	if status:
+		q['status'] = status
+	
+	category = request.args.get('category', '').strip().lower()
+	if category and category in CATEGORIES:
+		q['category'] = category
+	
+	assigned_provider = request.args.get('assigned_provider', '').strip().lower()
+	if assigned_provider:
+		q['assigned_provider'] = assigned_provider
+	
+	created_by = request.args.get('created_by', '').strip().lower()
+	if created_by:
+		q['created_by'] = created_by
+	
+	# Date range filters (optional - filter by created_at timestamp)
+	created_after = request.args.get('created_after', '').strip()
+	if created_after:
+		try:
+			if 'created_at' not in q:
+				q['created_at'] = {}
+			q['created_at']['$gte'] = int(created_after)
+		except ValueError:
+			pass
+	
+	created_before = request.args.get('created_before', '').strip()
+	if created_before:
+		try:
+			if 'created_at' not in q:
+				q['created_at'] = {}
+			q['created_at']['$lte'] = int(created_before)
+		except ValueError:
+			pass
+	
+	# Sort parameter (default: newest first)
+	sort_direction = -1 if request.args.get('sort', 'desc').strip().lower() == 'desc' else 1
 
 	tickets = []
-	for t in db.tickets.find(q).sort('created_at', -1):
+	for t in db.tickets.find(q).sort('created_at', sort_direction):
 		obj = { **t }
 		obj['id'] = str(obj.pop('_id'))
 		if obj.get('invoice_id') and isinstance(obj['invoice_id'], ObjectId):
@@ -122,6 +165,7 @@ def list_tickets():
 				if inv and 'amount' in inv:
 					obj['invoice_amount'] = float(inv['amount'])
 		tickets.append(obj)
+	
 	return { 'tickets': tickets }, 200
 
 

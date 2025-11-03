@@ -75,4 +75,69 @@ curl -X POST http://localhost:5000/api/users \
 	"role": "user"
 }'
 ```
-# service-app-backend
+
+## Tickets API
+
+- `GET /api/tickets` (requires auth) - List tickets with backend filtering
+  - Query parameters:
+    - `status` - Filter by ticket status (e.g., "Submitted", "Admin Review", "Manager Approval")
+    - `category` - Filter by category: `bathroom`, `table`, or `ac`
+    - `assigned_provider` - Filter by assigned provider email
+    - `created_by` - Filter by creator email
+    - `created_after` - Filter tickets created after this timestamp (Unix timestamp)
+    - `created_before` - Filter tickets created before this timestamp (Unix timestamp)
+    - `sort` - Sort direction: `asc` or `desc` (default: `desc`)
+  - Role-based filtering is automatically applied:
+    - `user` role: Only sees tickets they created
+    - `serviceprovider` role: Only sees tickets assigned to them
+    - Other roles: See all tickets (respecting query filters)
+  - Returns: `200 { tickets: [...] }`
+
+Examples:
+
+```bash
+# Get all tickets (role-based filtered)
+curl -H "Authorization: Bearer <token>" http://localhost:5000/api/tickets
+
+# Filter by status
+curl -H "Authorization: Bearer <token>" "http://localhost:5000/api/tickets?status=Manager%20Approval"
+
+# Filter by category
+curl -H "Authorization: Bearer <token>" "http://localhost:5000/api/tickets?category=bathroom"
+
+# Combine filters
+curl -H "Authorization: Bearer <token>" "http://localhost:5000/api/tickets?status=Submitted&category=ac"
+
+# Filter by assigned provider
+curl -H "Authorization: Bearer <token>" "http://localhost:5000/api/tickets?assigned_provider=provider@example.com"
+```
+
+- `POST /api/tickets` (requires user role) - Create a new ticket
+  - Multipart form data: `category`, `description`, `image` (file)
+  - Returns: `201 { id, status }`
+
+- `PATCH /api/tickets/<id>/assign` (requires admin role) - Assign ticket to provider
+  - Body: `{ provider_email: "provider@example.com" }`
+  - Returns: `200 { message }`
+
+- `POST /api/tickets/<id>/complete` (requires serviceprovider role) - Submit completion images
+  - Multipart form data: `images[]` (one or more files)
+  - Returns: `200 { message }`
+
+- `PATCH /api/tickets/<id>/verify` (requires user role) - Verify completed work
+  - Returns: `200 { message }`
+
+## Invoices API
+
+- `POST /api/invoices` (requires admin role) - Create invoice for a ticket
+  - Body: `{ ticket_id: "...", amount: 1200 }`
+  - Returns: `201 { id }` or `409 { error }` if invoice already exists
+
+- `PATCH /api/invoices/<id>/approve` (requires manager role) - Approve invoice
+  - Returns: `200 { message }`
+
+- `PATCH /api/invoices/<id>/reject` (requires manager role) - Reject invoice
+  - Returns: `200 { message }`
+
+- `PATCH /api/invoices/<id>/process` (requires accountant role) - Process payment
+  - Returns: `200 { message }`
