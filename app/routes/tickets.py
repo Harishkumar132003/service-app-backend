@@ -189,6 +189,12 @@ def list_tickets():
 			# Populate invoice_amount if missing
 			if inv and not obj.get('invoice_amount') and ('amount' in inv) and (inv['amount'] is not None):
 				obj['invoice_amount'] = float(inv['amount'])
+			# Expose invoice status for filtering on frontend
+			if inv and inv.get('status'):
+				obj['invoice_status'] = inv['status']
+			# Expose who last updated (approved/rejected)
+			if inv and inv.get('updated_by'):
+				obj['invoice_updated_by'] = inv['updated_by']
 			# Indicate if invoice has an image
 			if inv and inv.get('image_id'):
 				obj['invoice_has_image'] = True

@@ -5,7 +5,7 @@ import base64
 from io import BytesIO
 
 from ..db import get_db
-from ..utils.jwt_utils import require_roles
+from ..utils.jwt_utils import require_roles, get_bearer_token, decode_token
 
 invoices_bp = Blueprint('invoices', __name__)
 
@@ -127,7 +127,14 @@ def approve_invoice(invoice_id: str):
 	except Exception:
 		return { 'error': 'Invalid invoice id' }, 400
 	now = int(time())
-	inv = db.invoices.find_one_and_update({ '_id': _oid }, { '$set': { 'status': 'Approved', 'approved_at': now } }, return_document=True)
+	token = get_bearer_token()
+	payload = decode_token(token) if token else {}
+	email = payload.get('email')
+	inv = db.invoices.find_one_and_update(
+		{ '_id': _oid },
+		{ '$set': { 'status': 'Approved', 'approved_at': now, 'updated_by': email } },
+		return_document=True
+	)
 	if not inv:
 		return { 'error': 'Invoice not found' }, 404
 	db.tickets.update_one({ '_id': inv['ticket_id'] }, { '$set': { 'status': 'Service Provider Assignment' } })
@@ -143,7 +150,14 @@ def reject_invoice(invoice_id: str):
 	except Exception:
 		return { 'error': 'Invalid invoice id' }, 400
 	now = int(time())
-	inv = db.invoices.find_one_and_update({ '_id': _oid }, { '$set': { 'status': 'Rejected', 'approved_at': now } }, return_document=True)
+	token = get_bearer_token()
+	payload = decode_token(token) if token else {}
+	email = payload.get('email')
+	inv = db.invoices.find_one_and_update(
+		{ '_id': _oid },
+		{ '$set': { 'status': 'Rejected', 'approved_at': now, 'updated_by': email } },
+		return_document=True
+	)
 	if not inv:
 		return { 'error': 'Invoice not found' }, 404
 	# Keep invoice_id on ticket for traceability; set status back to Admin Review
