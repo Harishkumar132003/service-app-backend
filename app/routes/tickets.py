@@ -143,7 +143,11 @@ def list_tickets():
 	# Apply additional filters from query parameters
 	status = request.args.get('status', '').strip()
 	if status:
-		q['status'] = status
+		statuses = [s.strip() for s in status.split(',') if s.strip()]
+		if len(statuses) == 1:
+			q['status'] = statuses[0]
+		else:
+			q['status'] = { '$in': statuses }
 	
 	category = request.args.get('category', '').strip().lower()
 	if category and category in CATEGORIES:
