@@ -174,7 +174,36 @@ def process_payment(invoice_id: str):
 	except Exception:
 		return { 'error': 'Invalid invoice id' }, 400
 	now = int(time())
-	inv = db.invoices.find_one_and_update({ '_id': _oid, 'status': { '$in': ['Approved'] } }, { '$set': { 'status': 'Processed', 'processed_at': now, 'paid': True } }, return_document=True)
+	# Support optional payment image via multipart OR JSON
+	payment_image = None
+	if request.content_type and 'multipart/form-data' in request.content_type:
+		payment_image = request.files.get('payment_image')
+	else:
+		# No file in JSON path
+		payment_image = None
+
+	image_id = None
+	if payment_image:
+		try:
+			image_id = _save_image_to_db(payment_image)
+		except ValueError as ve:
+			return { 'error': str(ve) }, 400
+		except Exception:
+			return { 'error': 'Invalid payment image' }, 400
+
+	token = get_bearer_token()
+	payload = decode_token(token) if token else {}
+	email = payload.get('email')
+
+	set_fields = { 'status': 'Processed', 'processed_at': now, 'paid': True, 'updated_by': email }
+	if image_id:
+		set_fields['payment_image_id'] = image_id
+
+	inv = db.invoices.find_one_and_update(
+		{ '_id': _oid, 'status': { '$in': ['Approved'] } },
+		{ '$set': set_fields },
+		return_document=True
+	)
 	if not inv:
 		return { 'error': 'Invoice not ready for processing' }, 400
 	db.tickets.update_one({ '_id': inv['ticket_id'] }, { '$set': { 'status': 'Completed' } })

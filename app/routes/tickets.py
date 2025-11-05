@@ -196,6 +196,9 @@ def list_tickets():
 			# Expose invoice status for filtering on frontend
 			if inv and inv.get('status'):
 				obj['invoice_status'] = inv['status']
+			# Expose invoice processed_at
+			if inv and inv.get('processed_at') is not None:
+				obj['invoice_processed_at'] = int(inv['processed_at'])
 			# Expose who last updated (approved/rejected)
 			if inv and inv.get('updated_by'):
 				obj['invoice_updated_by'] = inv['updated_by']
