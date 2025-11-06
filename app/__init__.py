@@ -6,6 +6,8 @@ from .routes.auth import auth_bp
 from .routes.users import users_bp
 from .routes.tickets import tickets_bp
 from .routes.invoices import invoices_bp
+from .routes.companies import companies_bp
+from .routes.categories import categories_bp
 import os
 
 
@@ -23,6 +25,8 @@ def create_app() -> Flask:
 	app.register_blueprint(users_bp, url_prefix="/api/users")
 	app.register_blueprint(tickets_bp, url_prefix="/api/tickets")
 	app.register_blueprint(invoices_bp, url_prefix="/api/invoices")
+	app.register_blueprint(companies_bp, url_prefix="/api/companies")
+	app.register_blueprint(categories_bp, url_prefix="/api/categories")
 
 	@app.get("/health")
 	def health_check():

@@ -10,9 +10,9 @@ def init_db(app: Flask) -> None:
 	global client
 	if client is None:
 		client = MongoClient(Config.MONGO_URI)
-		# Create required indexes once on startup
 		db =  client["serviceapp"]
 		db.users.create_index("email", unique=True)
+		db.categories.create_index("name_lower", unique=True)
 
 	@app.before_request
 	def before_request() -> None:

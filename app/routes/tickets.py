@@ -115,7 +115,7 @@ def create_ticket():
         'created_by': email,
         'created_at': now,
         'status': 'Submitted',
-        'initial_image_id': initial_image_id,  # can be None
+        'initial_image_id': initial_image_id,
         'completion_image_ids': [],
         'assigned_provider': None,
         'invoice_id': None,
@@ -294,3 +294,26 @@ def get_image(image_id: str):
     except Exception:
         return { 'error': 'Corrupt image data' }, 500
     return send_file(BytesIO(data), mimetype=doc.get('content_type') or 'application/octet-stream', download_name=doc.get('filename') or 'image')
+
+
+@tickets_bp.get('/metrics')
+@require_roles(['admin'])
+def monthly_metrics():
+    db = get_db()
+    # Compute start of current month (UTC, integer seconds)
+    import datetime as _dt
+    now_dt = _dt.datetime.utcnow()
+    month_start = _dt.datetime(year=now_dt.year, month=now_dt.month, day=1)
+    month_start_ts = int(month_start.timestamp())
+
+    q = { 'created_at': { '$gte': month_start_ts } }
+    total = db.tickets.count_documents(q)
+    completed = db.tickets.count_documents({ **q, 'status': 'Completed' })
+    pending = total - completed
+
+    return {
+        'total': int(total),
+        'completed': int(completed),
+        'pending': int(max(pending, 0)),
+        'period_start': month_start.isoformat() + 'Z'
+    }, 200
