@@ -98,6 +98,18 @@ def create_ticket():
     token = get_bearer_token()
     payload = decode_token(token) if token else {}
     email = payload.get('email')
+    user = db.users.find_one({'email': email}) if email else None
+    if not user:
+        return { 'error': 'User not found' }, 404
+    company_val = user.get('company_id')
+    if not company_val:
+        return { 'error': 'User has no company assigned' }, 403
+    company_oid = company_val
+    if isinstance(company_oid, str):
+        try:
+            company_oid = ObjectId(company_oid)
+        except Exception:
+            return { 'error': 'Invalid company_id in user profile' }, 400
 
     initial_image_id = None
     if image:
@@ -119,120 +131,145 @@ def create_ticket():
         'completion_image_ids': [],
         'assigned_provider': None,
         'invoice_id': None,
+        'company_id': company_oid,
     })
 
     return { 'id': str(res.inserted_id), 'status': 'Submitted' }, 201
 
-
 @tickets_bp.get('')
 @require_roles(['admin','manager','serviceprovider','accountant','user'])
 def list_tickets():
-	db = get_db()
-	token = get_bearer_token()
-	payload = decode_token(token) if token else {}
-	role = payload.get('role')
-	email = payload.get('email')
-	
-	# Build base query with role-based security
-	q = {}
-	if role == 'user':
-		q['created_by'] = email
-	elif role == 'serviceprovider':
-		q['assigned_provider'] = email
-	
-	# Apply additional filters from query parameters
-	status = request.args.get('status', '').strip()
-	if status:
-		statuses = [s.strip() for s in status.split(',') if s.strip()]
-		if len(statuses) == 1:
-			q['status'] = statuses[0]
-		else:
-			q['status'] = { '$in': statuses }
-	
-	category = request.args.get('category', '').strip().lower()
-	if category and category in CATEGORIES:
-		q['category'] = category
-	
-	assigned_provider = request.args.get('assigned_provider', '').strip().lower()
-	if assigned_provider:
-		q['assigned_provider'] = assigned_provider
-	
-	created_by = request.args.get('created_by', '').strip().lower()
-	if created_by:
-		q['created_by'] = created_by
-	
-	# Date range filters (optional - filter by created_at timestamp)
-	created_after = request.args.get('created_after', '').strip()
-	if created_after:
-		try:
-			if 'created_at' not in q:
-				q['created_at'] = {}
-			q['created_at']['$gte'] = int(created_after)
-		except ValueError:
-			pass
-	
-	created_before = request.args.get('created_before', '').strip()
-	if created_before:
-		try:
-			if 'created_at' not in q:
-				q['created_at'] = {}
-			q['created_at']['$lte'] = int(created_before)
-		except ValueError:
-			pass
-	
-	# Sort parameter (default: newest first)
-	sort_direction = -1 if request.args.get('sort', 'desc').strip().lower() == 'desc' else 1
+    db = get_db()
+    token = get_bearer_token()
+    payload = decode_token(token) if token else {}
+    role = payload.get('role')
+    email = payload.get('email')
+    user = db.users.find_one({'email': email}) if email else None
+    
+    # Build base query with role-based security
+    q = {}
+    if role == 'user':
+        if not user or not user.get('company_id'):
+            return { 'tickets': [] }, 200
+        company_oid = user.get('company_id')
+        if isinstance(company_oid, str):
+            try:
+                company_oid = ObjectId(company_oid)
+            except Exception:
+                return { 'tickets': [] }, 200
+        q['company_id'] = company_oid
+    elif role in {'manager', 'accountant'}:
+        allowed = user.get('company_ids') if user else []
+        if (not allowed) and user and user.get('company_id'):
+            allowed = [user.get('company_id')]
+        allowed_oids = []
+        for v in (allowed or []):
+            if isinstance(v, ObjectId):
+                allowed_oids.append(v)
+            else:
+                try:
+                    allowed_oids.append(ObjectId(str(v)))
+                except Exception:
+                    continue
+        if not allowed_oids:
+            return { 'tickets': [] }, 200
+        q['company_id'] = { '$in': allowed_oids }
+    elif role == 'serviceprovider':
+        q['assigned_provider'] = email
+    
+    # Apply additional filters from query parameters
+    status = request.args.get('status', '').strip()
+    if status:
+        statuses = [s.strip() for s in status.split(',') if s.strip()]
+        if len(statuses) == 1:
+            q['status'] = statuses[0]
+        else:
+            q['status'] = { '$in': statuses }
+    
+    category = request.args.get('category', '').strip().lower()
+    if category and category in CATEGORIES:
+        q['category'] = category
+    
+    assigned_provider = request.args.get('assigned_provider', '').strip().lower()
+    if assigned_provider:
+        q['assigned_provider'] = assigned_provider
+    
+    created_by = request.args.get('created_by', '').strip().lower()
+    if created_by:
+        q['created_by'] = created_by
+    
+    # Date range filters (optional - filter by created_at timestamp)
+    created_after = request.args.get('created_after', '').strip()
+    if created_after:
+        try:
+            if 'created_at' not in q:
+                q['created_at'] = {}
+            q['created_at']['$gte'] = int(created_after)
+        except ValueError:
+            pass
+    
+    created_before = request.args.get('created_before', '').strip()
+    if created_before:
+        try:
+            if 'created_at' not in q:
+                q['created_at'] = {}
+            q['created_at']['$lte'] = int(created_before)
+        except ValueError:
+            pass
+    
+    # Sort parameter (default: newest first)
+    sort_direction = -1 if request.args.get('sort', 'desc').strip().lower() == 'desc' else 1
 
-	tickets = []
-	for t in db.tickets.find(q).sort('created_at', sort_direction):
-		obj = { **t }
-		obj['id'] = str(obj.pop('_id'))
-		if obj.get('invoice_id') and isinstance(obj['invoice_id'], ObjectId):
-			obj['invoice_id'] = str(obj['invoice_id'])
-			inv = db.invoices.find_one({ '_id': ObjectId(obj['invoice_id']) })
-			# Populate invoice_amount if missing
-			if inv and not obj.get('invoice_amount') and ('amount' in inv) and (inv['amount'] is not None):
-				obj['invoice_amount'] = float(inv['amount'])
-			# Expose invoice status for filtering on frontend
-			if inv and inv.get('status'):
-				obj['invoice_status'] = inv['status']
-			# Expose invoice processed_at
-			if inv and inv.get('processed_at') is not None:
-				obj['invoice_processed_at'] = int(inv['processed_at'])
-			# Expose who last updated (approved/rejected)
-			if inv and inv.get('updated_by'):
-				obj['invoice_updated_by'] = inv['updated_by']
-			# Indicate if invoice has an image
-			if inv and inv.get('image_id'):
-				obj['invoice_has_image'] = True
-		# Convert image ObjectIds to strings for the API response
-		if obj.get('initial_image_id') and isinstance(obj['initial_image_id'], ObjectId):
-			obj['initial_image_id'] = str(obj['initial_image_id'])
-		if obj.get('completion_image_ids') and isinstance(obj['completion_image_ids'], list):
-			obj['completion_image_ids'] = [str(x) if isinstance(x, ObjectId) else x for x in obj['completion_image_ids']]
-		tickets.append(obj)
-	
-	return { 'tickets': tickets }, 200
-
+    tickets = []
+    for t in db.tickets.find(q).sort('created_at', sort_direction):
+        obj = { **t }
+        obj['id'] = str(obj.pop('_id'))
+        if obj.get('invoice_id') and isinstance(obj['invoice_id'], ObjectId):
+            obj['invoice_id'] = str(obj['invoice_id'])
+            inv = db.invoices.find_one({ '_id': ObjectId(obj['invoice_id']) })
+            # Populate invoice_amount if missing
+            if inv and not obj.get('invoice_amount') and ('amount' in inv) and (inv['amount'] is not None):
+                obj['invoice_amount'] = float(inv['amount'])
+            # Expose invoice status for filtering on frontend
+            if inv and inv.get('status'):
+                obj['invoice_status'] = inv['status']
+            # Expose invoice processed_at
+            if inv and inv.get('processed_at') is not None:
+                obj['invoice_processed_at'] = int(inv['processed_at'])
+            # Expose who last updated (approved/rejected)
+            if inv and inv.get('updated_by'):
+                obj['invoice_updated_by'] = inv['updated_by']
+            # Indicate if invoice has an image
+            if inv and inv.get('image_id'):
+                obj['invoice_has_image'] = True
+        # Convert image ObjectIds to strings for the API response
+        if obj.get('initial_image_id') and isinstance(obj['initial_image_id'], ObjectId):
+            obj['initial_image_id'] = str(obj['initial_image_id'])
+        if obj.get('completion_image_ids') and isinstance(obj['completion_image_ids'], list):
+            obj['completion_image_ids'] = [str(x) if isinstance(x, ObjectId) else x for x in obj['completion_image_ids']]
+        if obj.get('company_id') and isinstance(obj['company_id'], ObjectId):
+            obj['company_id'] = str(obj['company_id'])
+        tickets.append(obj)
+    
+    return { 'tickets': tickets }, 200
 
 @tickets_bp.patch('/<ticket_id>/assign')
 @require_roles(['admin'])
 def assign_ticket(ticket_id: str):
-	db = get_db()
-	data = request.get_json(silent=True) or {}
-	provider_email = (data.get('provider_email') or '').strip().lower()
-	if not provider_email:
-		return { 'error': 'provider_email required' }, 400
-	try:
-		_oid = ObjectId(ticket_id)
-	except Exception:
-		return { 'error': 'Invalid ticket id' }, 400
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    provider_email = (data.get('provider_email') or '').strip().lower()
+    if not provider_email:
+        return { 'error': 'provider_email required' }, 400
+    try:
+        _oid = ObjectId(ticket_id)
+    except Exception:
+        return { 'error': 'Invalid ticket id' }, 400
 
-	res = db.tickets.update_one({ '_id': _oid }, { '$set': { 'assigned_provider': provider_email, 'status': 'Service Provider Assignment' } })
-	if res.matched_count == 0:
-		return { 'error': 'Ticket not found' }, 404
-	return { 'message': 'Assigned' }, 200
-
+    res = db.tickets.update_one({ '_id': _oid }, { '$set': { 'assigned_provider': provider_email, 'status': 'Service Provider Assignment' } })
+    if res.matched_count == 0:
+        return { 'error': 'Ticket not found' }, 404
+    return { 'message': 'Assigned' }, 200
 
 @tickets_bp.post('/<ticket_id>/complete')
 @require_roles(['serviceprovider'])
@@ -259,24 +296,37 @@ def complete_work(ticket_id: str):
     db.tickets.update_one({ '_id': _oid }, { '$set': { 'completion_image_ids': saved_ids, 'status': 'Work Completion' } })
     return { 'message': 'Work submitted' }, 200
 
-
 @tickets_bp.patch('/<ticket_id>/verify')
 @require_roles(['user'])
 def member_verify(ticket_id: str):
-	db = get_db()
-	try:
-		_oid = ObjectId(ticket_id)
-	except Exception:
-		return { 'error': 'Invalid ticket id' }, 400
-
-	db.tickets.update_one({ '_id': _oid }, { '$set': { 'status': 'Accountant Processing' } })
-	return { 'message': 'Verified' }, 200
-
+    db = get_db()
+    try:
+        _oid = ObjectId(ticket_id)
+    except Exception:
+        return { 'error': 'Invalid ticket id' }, 400
+    token = get_bearer_token()
+    payload = decode_token(token) if token else {}
+    email = payload.get('email')
+    user = db.users.find_one({'email': email}) if email else None
+    if not user or not user.get('company_id'):
+        return { 'error': 'Unauthorized' }, 403
+    company_oid = user.get('company_id')
+    if isinstance(company_oid, str):
+        try:
+            company_oid = ObjectId(company_oid)
+        except Exception:
+            return { 'error': 'Unauthorized' }, 403
+    res = db.tickets.update_one(
+        { '_id': _oid, 'company_id': company_oid, 'created_by': email },
+        { '$set': { 'status': 'Accountant Processing' } }
+    )
+    if res.matched_count == 0:
+        return { 'error': 'Not allowed' }, 403
+    return { 'message': 'Verified' }, 200
 
 @tickets_bp.get('/uploads/<filename>')
 def serve_upload(filename: str):
-	return send_from_directory(current_app.config['UPLOAD_DIR'], filename)
-
+    return send_from_directory(current_app.config['UPLOAD_DIR'], filename)
 
 @tickets_bp.get('/images/<image_id>')
 def get_image(image_id: str):

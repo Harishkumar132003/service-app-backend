@@ -130,6 +130,25 @@ def approve_invoice(invoice_id: str):
 	token = get_bearer_token()
 	payload = decode_token(token) if token else {}
 	email = payload.get('email')
+	user = db.users.find_one({ 'email': email }) if email else None
+	allowed = user.get('company_ids') if user else []
+	allowed_oids = []
+	for v in (allowed or []):
+		if isinstance(v, ObjectId):
+			allowed_oids.append(v)
+		else:
+			try:
+				allowed_oids.append(ObjectId(str(v)))
+			except Exception:
+				continue
+	inv0 = db.invoices.find_one({ '_id': _oid })
+	if not inv0:
+		return { 'error': 'Invoice not found' }, 404
+	ticket = db.tickets.find_one({ '_id': inv0['ticket_id'] })
+	if not ticket:
+		return { 'error': 'Ticket not found' }, 404
+	if not allowed_oids or ticket.get('company_id') not in allowed_oids:
+		return { 'error': 'Forbidden' }, 403
 	inv = db.invoices.find_one_and_update(
 		{ '_id': _oid },
 		{ '$set': { 'status': 'Approved', 'approved_at': now, 'updated_by': email } },
@@ -153,6 +172,25 @@ def reject_invoice(invoice_id: str):
 	token = get_bearer_token()
 	payload = decode_token(token) if token else {}
 	email = payload.get('email')
+	user = db.users.find_one({ 'email': email }) if email else None
+	allowed = user.get('company_ids') if user else []
+	allowed_oids = []
+	for v in (allowed or []):
+		if isinstance(v, ObjectId):
+			allowed_oids.append(v)
+		else:
+			try:
+				allowed_oids.append(ObjectId(str(v)))
+			except Exception:
+				continue
+	inv0 = db.invoices.find_one({ '_id': _oid })
+	if not inv0:
+		return { 'error': 'Invoice not found' }, 404
+	ticket = db.tickets.find_one({ '_id': inv0['ticket_id'] })
+	if not ticket:
+		return { 'error': 'Ticket not found' }, 404
+	if not allowed_oids or ticket.get('company_id') not in allowed_oids:
+		return { 'error': 'Forbidden' }, 403
 	inv = db.invoices.find_one_and_update(
 		{ '_id': _oid },
 		{ '$set': { 'status': 'Rejected', 'approved_at': now, 'updated_by': email } },
@@ -194,6 +232,25 @@ def process_payment(invoice_id: str):
 	token = get_bearer_token()
 	payload = decode_token(token) if token else {}
 	email = payload.get('email')
+	user = db.users.find_one({ 'email': email }) if email else None
+	allowed = user.get('company_ids') if user else []
+	allowed_oids = []
+	for v in (allowed or []):
+		if isinstance(v, ObjectId):
+			allowed_oids.append(v)
+		else:
+			try:
+				allowed_oids.append(ObjectId(str(v)))
+			except Exception:
+				continue
+	inv0 = db.invoices.find_one({ '_id': _oid })
+	if not inv0:
+		return { 'error': 'Invoice not ready for processing' }, 400
+	ticket = db.tickets.find_one({ '_id': inv0['ticket_id'] })
+	if not ticket:
+		return { 'error': 'Ticket not found' }, 404
+	if not allowed_oids or ticket.get('company_id') not in allowed_oids:
+		return { 'error': 'Forbidden' }, 403
 
 	set_fields = { 'status': 'Processed', 'processed_at': now, 'paid': True, 'updated_by': email }
 	if image_id:
@@ -224,6 +281,25 @@ def get_invoice_image(invoice_id: str):
     img_id = inv.get('image_id')
     if not img_id:
         return { 'error': 'No image for this invoice' }, 404
+    token = get_bearer_token()
+    payload = decode_token(token) if token else {}
+    role = payload.get('role')
+    if role in {'manager', 'accountant'}:
+        email = payload.get('email')
+        user = db.users.find_one({ 'email': email }) if email else None
+        allowed = user.get('company_ids') if user else []
+        allowed_oids = []
+        for v in (allowed or []):
+            if isinstance(v, ObjectId):
+                allowed_oids.append(v)
+            else:
+                try:
+                    allowed_oids.append(ObjectId(str(v)))
+                except Exception:
+                    continue
+        ticket = db.tickets.find_one({ '_id': inv['ticket_id'] })
+        if not ticket or not allowed_oids or ticket.get('company_id') not in allowed_oids:
+            return { 'error': 'Forbidden' }, 403
     doc = db.images.find_one({ '_id': img_id }) if isinstance(img_id, ObjectId) else None
     if not doc:
         return { 'error': 'Image not found' }, 404

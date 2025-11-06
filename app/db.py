@@ -13,6 +13,7 @@ def init_db(app: Flask) -> None:
 		db =  client["serviceapp"]
 		db.users.create_index("email", unique=True)
 		db.categories.create_index("name_lower", unique=True)
+		db.tickets.create_index("company_id")
 
 	@app.before_request
 	def before_request() -> None:
