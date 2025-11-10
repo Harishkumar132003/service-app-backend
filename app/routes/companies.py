@@ -70,7 +70,12 @@ def list_companies():
         company_id = company['_id']
         
         # Get users for this company
-        users = list(db.users.find({'company_id': company_id}))
+        users = list(db.users.find({
+        '$or': [
+            { 'company_id': { '$in': [company_id, str(company_id)] } },
+            { 'company_ids': { '$in': [company_id, str(company_id)] } },
+        ]
+    }))
         
         user_list = []
         for user in users:
@@ -242,6 +247,42 @@ def add_user_to_company(company_id: str):
     # Check if user already exists
     existing = db.users.find_one({'email': email})
     if existing:
+        if role in ['manager', 'accountant']:
+            company_ids = existing.get('company_ids') or []
+            normalized: list[ObjectId] = []
+            for v in company_ids:
+                if isinstance(v, ObjectId):
+                    normalized.append(v)
+                else:
+                    try:
+                        normalized.append(ObjectId(str(v)))
+                    except Exception:
+                        continue
+            if existing.get('company_id'):
+                base_id = existing.get('company_id')
+                if not isinstance(base_id, ObjectId):
+                    try:
+                        base_id = ObjectId(str(base_id))
+                    except Exception:
+                        base_id = None
+                if base_id and base_id not in normalized:
+                    normalized.append(base_id)
+            if company_oid not in normalized:
+                normalized.append(company_oid)
+            update_fields = { 'company_ids': normalized }
+            if not existing.get('company_id'):
+                update_fields['company_id'] = company_oid
+            if existing.get('role') != role:
+                update_fields['role'] = role
+            db.users.update_one({ '_id': existing['_id'] }, { '$set': update_fields })
+            return {
+                'id': str(existing['_id']),
+                'email': existing.get('email'),
+                'role': update_fields.get('role', existing.get('role')),
+                'company_ids': [str(x) for x in update_fields['company_ids']],
+                'company_id': str(update_fields.get('company_id', existing.get('company_id') or company_id)),
+                'message': 'Company added to existing user'
+            }, 200
         return {'error': 'User with this email already exists'}, 409
     
     
@@ -284,7 +325,12 @@ def get_company_users(company_id: str):
     if not company:
         return {'error': 'Company not found'}, 404
     
-    users = list(db.users.find({'company_id': company_oid}))
+    users = list(db.users.find({
+        '$or': [
+            { 'company_id': { '$in': [company_oid, str(company_oid)] } },
+            { 'company_ids': { '$in': [company_oid, str(company_oid)] } },
+        ]
+    }))
     
     user_list = []
     for user in users:
@@ -303,24 +349,77 @@ def get_company_users(company_id: str):
 @companies_bp.delete('/<company_id>/users/<user_id>')
 @require_roles(['admin'])
 def remove_user_from_company(company_id: str, user_id: str):
-    """Remove a user from a company (delete user)"""
+    """Detach a user from the given company without deleting the user."""
     db = get_db()
-    
     try:
         company_oid = ObjectId(company_id)
         user_oid = ObjectId(user_id)
     except Exception:
         return {'error': 'Invalid ID'}, 400
-    
-    # Verify user belongs to company
-    user = db.users.find_one({'_id': user_oid, 'company_id': company_oid})
+
+    user = db.users.find_one({'_id': user_oid})
     if not user:
-        return {'error': 'User not found in this company'}, 404
-    
-    # Delete user
-    db.users.delete_one({'_id': user_oid})
-    
-    return {'message': 'User removed successfully'}, 200
+        return {'error': 'User not found'}, 404
+
+    def _normalize_ids(vals):
+        out = []
+        for v in vals or []:
+            if isinstance(v, ObjectId):
+                out.append(v)
+            else:
+                try:
+                    out.append(ObjectId(str(v)))
+                except Exception:
+                    continue
+        return out
+
+    company_ids = _normalize_ids(user.get('company_ids'))
+    company_id_field = user.get('company_id')
+    company_id_norm = None
+    if company_id_field is not None:
+        if isinstance(company_id_field, ObjectId):
+            company_id_norm = company_id_field
+        else:
+            try:
+                company_id_norm = ObjectId(str(company_id_field))
+            except Exception:
+                company_id_norm = None
+
+    is_in_company = (company_id_norm == company_oid) or (company_oid in company_ids)
+    if not is_in_company:
+        return {'error': 'User not associated with this company'}, 404
+
+    new_company_ids = [cid for cid in company_ids if cid != company_oid]
+    update = { 'company_ids': new_company_ids }
+
+    if company_id_norm == company_oid:
+        if new_company_ids:
+            update['company_id'] = new_company_ids[0]
+        else:
+            update['company_id'] = None
+
+    # Build update operations
+    ops = {}
+    set_fields = {}
+    unset_fields = {}
+    if 'company_ids' in update:
+        set_fields['company_ids'] = update['company_ids']
+    if 'company_id' in update:
+        if update['company_id'] is None:
+            unset_fields['company_id'] = ""
+        else:
+            set_fields['company_id'] = update['company_id']
+
+    if set_fields:
+        ops['$set'] = set_fields
+    if unset_fields:
+        ops['$unset'] = unset_fields
+
+    if not ops:
+        return {'message': 'No changes applied'}, 200
+
+    db.users.update_one({'_id': user_oid}, ops)
+    return {'message': 'User detached from company successfully'}, 200
 
 
 @companies_bp.patch('/<company_id>/users/<user_id>')

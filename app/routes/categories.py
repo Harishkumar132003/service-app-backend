@@ -34,7 +34,7 @@ def create_category():
     }, 201
 
 @categories_bp.get('')
-@require_roles(['admin'])
+@require_roles(['admin','user','manager','serviceprovider','accountant'])
 def list_categories():
     db = get_db()
     items = list(db.categories.find({'active': True}).sort('name_lower', 1))

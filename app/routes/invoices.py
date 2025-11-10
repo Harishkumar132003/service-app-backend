@@ -132,22 +132,40 @@ def approve_invoice(invoice_id: str):
 	email = payload.get('email')
 	user = db.users.find_one({ 'email': email }) if email else None
 	allowed = user.get('company_ids') if user else []
+	if (not allowed) and user and user.get('company_id'):
+		allowed = [user.get('company_id')]
 	allowed_oids = []
+	allowed_strs = set()
 	for v in (allowed or []):
 		if isinstance(v, ObjectId):
 			allowed_oids.append(v)
+			allowed_strs.add(str(v))
 		else:
 			try:
-				allowed_oids.append(ObjectId(str(v)))
+				oid = ObjectId(str(v))
+				allowed_oids.append(oid)
+				allowed_strs.add(str(oid))
 			except Exception:
-				continue
+				allowed_strs.add(str(v))
 	inv0 = db.invoices.find_one({ '_id': _oid })
 	if not inv0:
 		return { 'error': 'Invoice not found' }, 404
 	ticket = db.tickets.find_one({ '_id': inv0['ticket_id'] })
 	if not ticket:
 		return { 'error': 'Ticket not found' }, 404
-	if not allowed_oids or ticket.get('company_id') not in allowed_oids:
+	tc = ticket.get('company_id')
+	in_allowed = False
+	if isinstance(tc, ObjectId):
+		in_allowed = (tc in allowed_oids) or (str(tc) in allowed_strs)
+	else:
+		try:
+			tc_oid = ObjectId(str(tc))
+			in_allowed = (tc_oid in allowed_oids) or (str(tc_oid) in allowed_strs)
+		except Exception:
+			in_allowed = (str(tc) in allowed_strs)
+	if not allowed_oids and not allowed_strs:
+		return { 'error': 'Forbidden' }, 403
+	if not in_allowed:
 		return { 'error': 'Forbidden' }, 403
 	inv = db.invoices.find_one_and_update(
 		{ '_id': _oid },
@@ -174,22 +192,40 @@ def reject_invoice(invoice_id: str):
 	email = payload.get('email')
 	user = db.users.find_one({ 'email': email }) if email else None
 	allowed = user.get('company_ids') if user else []
+	if (not allowed) and user and user.get('company_id'):
+		allowed = [user.get('company_id')]
 	allowed_oids = []
+	allowed_strs = set()
 	for v in (allowed or []):
 		if isinstance(v, ObjectId):
 			allowed_oids.append(v)
+			allowed_strs.add(str(v))
 		else:
 			try:
-				allowed_oids.append(ObjectId(str(v)))
+				oid = ObjectId(str(v))
+				allowed_oids.append(oid)
+				allowed_strs.add(str(oid))
 			except Exception:
-				continue
+				allowed_strs.add(str(v))
 	inv0 = db.invoices.find_one({ '_id': _oid })
 	if not inv0:
 		return { 'error': 'Invoice not found' }, 404
 	ticket = db.tickets.find_one({ '_id': inv0['ticket_id'] })
 	if not ticket:
 		return { 'error': 'Ticket not found' }, 404
-	if not allowed_oids or ticket.get('company_id') not in allowed_oids:
+	tc = ticket.get('company_id')
+	in_allowed = False
+	if isinstance(tc, ObjectId):
+		in_allowed = (tc in allowed_oids) or (str(tc) in allowed_strs)
+	else:
+		try:
+			tc_oid = ObjectId(str(tc))
+			in_allowed = (tc_oid in allowed_oids) or (str(tc_oid) in allowed_strs)
+		except Exception:
+			in_allowed = (str(tc) in allowed_strs)
+	if not allowed_oids and not allowed_strs:
+		return { 'error': 'Forbidden' }, 403
+	if not in_allowed:
 		return { 'error': 'Forbidden' }, 403
 	inv = db.invoices.find_one_and_update(
 		{ '_id': _oid },
@@ -234,22 +270,40 @@ def process_payment(invoice_id: str):
 	email = payload.get('email')
 	user = db.users.find_one({ 'email': email }) if email else None
 	allowed = user.get('company_ids') if user else []
+	if (not allowed) and user and user.get('company_id'):
+		allowed = [user.get('company_id')]
 	allowed_oids = []
+	allowed_strs = set()
 	for v in (allowed or []):
 		if isinstance(v, ObjectId):
 			allowed_oids.append(v)
+			allowed_strs.add(str(v))
 		else:
 			try:
-				allowed_oids.append(ObjectId(str(v)))
+				oid = ObjectId(str(v))
+				allowed_oids.append(oid)
+				allowed_strs.add(str(oid))
 			except Exception:
-				continue
+				allowed_strs.add(str(v))
 	inv0 = db.invoices.find_one({ '_id': _oid })
 	if not inv0:
 		return { 'error': 'Invoice not ready for processing' }, 400
 	ticket = db.tickets.find_one({ '_id': inv0['ticket_id'] })
 	if not ticket:
 		return { 'error': 'Ticket not found' }, 404
-	if not allowed_oids or ticket.get('company_id') not in allowed_oids:
+	tc = ticket.get('company_id')
+	in_allowed = False
+	if isinstance(tc, ObjectId):
+		in_allowed = (tc in allowed_oids) or (str(tc) in allowed_strs)
+	else:
+		try:
+			tc_oid = ObjectId(str(tc))
+			in_allowed = (tc_oid in allowed_oids) or (str(tc_oid) in allowed_strs)
+		except Exception:
+			in_allowed = (str(tc) in allowed_strs)
+	if not allowed_oids and not allowed_strs:
+		return { 'error': 'Forbidden' }, 403
+	if not in_allowed:
 		return { 'error': 'Forbidden' }, 403
 
 	set_fields = { 'status': 'Processed', 'processed_at': now, 'paid': True, 'updated_by': email }
@@ -288,17 +342,37 @@ def get_invoice_image(invoice_id: str):
         email = payload.get('email')
         user = db.users.find_one({ 'email': email }) if email else None
         allowed = user.get('company_ids') if user else []
+        if (not allowed) and user and user.get('company_id'):
+            allowed = [user.get('company_id')]
         allowed_oids = []
+        allowed_strs = set()
         for v in (allowed or []):
             if isinstance(v, ObjectId):
                 allowed_oids.append(v)
+                allowed_strs.add(str(v))
             else:
                 try:
-                    allowed_oids.append(ObjectId(str(v)))
+                    oid = ObjectId(str(v))
+                    allowed_oids.append(oid)
+                    allowed_strs.add(str(oid))
                 except Exception:
-                    continue
+                    allowed_strs.add(str(v))
         ticket = db.tickets.find_one({ '_id': inv['ticket_id'] })
-        if not ticket or not allowed_oids or ticket.get('company_id') not in allowed_oids:
+        if not ticket:
+            return { 'error': 'Forbidden' }, 403
+        tc = ticket.get('company_id')
+        in_allowed = False
+        if isinstance(tc, ObjectId):
+            in_allowed = (tc in allowed_oids) or (str(tc) in allowed_strs)
+        else:
+            try:
+                tc_oid = ObjectId(str(tc))
+                in_allowed = (tc_oid in allowed_oids) or (str(tc_oid) in allowed_strs)
+            except Exception:
+                in_allowed = (str(tc) in allowed_strs)
+        if not allowed_oids and not allowed_strs:
+            return { 'error': 'Forbidden' }, 403
+        if not in_allowed:
             return { 'error': 'Forbidden' }, 403
     doc = db.images.find_one({ '_id': img_id }) if isinstance(img_id, ObjectId) else None
     if not doc:

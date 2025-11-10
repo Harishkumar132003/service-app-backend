@@ -89,11 +89,12 @@ def _save_image_to_db(file_storage) -> ObjectId:
 def create_ticket():
     db = get_db()
     category = (request.form.get('category') or '').strip().lower()
+    category_id_raw = (request.form.get('category_id') or '').strip()
     description = (request.form.get('description') or '').strip()
     image = request.files.get('image')
 
-    if category not in CATEGORIES or not description:
-        return { 'error': 'category and description are required' }, 400
+    if (not category and not category_id_raw) or not description:
+        return { 'error': 'category/category_id and description are required' }, 400
 
     token = get_bearer_token()
     payload = decode_token(token) if token else {}
@@ -111,6 +112,32 @@ def create_ticket():
         except Exception:
             return { 'error': 'Invalid company_id in user profile' }, 400
 
+    # Resolve category (support category_id preferred, fallback to legacy name)
+    category_name = None
+    category_oid: ObjectId | None = None
+    if category_id_raw:
+        try:
+            tmp_oid = ObjectId(category_id_raw)
+        except Exception:
+            return { 'error': 'Invalid category_id' }, 400
+        cat = db.categories.find_one({ '_id': tmp_oid, 'active': True })
+        if not cat:
+            return { 'error': 'Category not found' }, 404
+        category_oid = tmp_oid
+        category_name = cat.get('name', '').strip() or None
+    else:
+        # Legacy path using free-text category with allow-list
+        if category not in CATEGORIES:
+            # Also attempt to map from categories collection by name_lower
+            cat = db.categories.find_one({ 'name_lower': category })
+            if cat:
+                category_oid = cat['_id']
+                category_name = cat.get('name', '')
+            else:
+                return { 'error': 'Invalid category' }, 400
+        else:
+            category_name = category
+
     initial_image_id = None
     if image:
         try:
@@ -122,9 +149,11 @@ def create_ticket():
 
     now = int(time())
     res = db.tickets.insert_one({
-        'category': category,
+        'category': (category_name or '').lower(),
+        'category_name': category_name,
+        'category_id': category_oid,
         'description': description,
-        'created_by': email,
+        'created_by': user['_id'],
         'created_at': now,
         'status': 'Submitted',
         'initial_image_id': initial_image_id,
@@ -224,6 +253,32 @@ def list_tickets():
     for t in db.tickets.find(q).sort('created_at', sort_direction):
         obj = { **t }
         obj['id'] = str(obj.pop('_id'))
+        # created_by details
+        created_by_user = None
+        cb = obj.get('created_by')
+        if isinstance(cb, ObjectId):
+            obj['created_by'] = str(cb)
+            created_by_user = db.users.find_one({ '_id': cb })
+        elif isinstance(cb, str) and cb:
+            created_by_user = db.users.find_one({ 'email': cb })
+        if created_by_user:
+            obj['created_by_user'] = {
+                'id': str(created_by_user.get('_id')),
+                'name': created_by_user.get('name', created_by_user.get('email', '')),
+                'email': created_by_user.get('email', ''),
+            }
+
+        # Category details
+        if obj.get('category_id') and isinstance(obj['category_id'], ObjectId):
+            obj['category_id'] = str(obj['category_id'])
+        if not obj.get('category_name') and obj.get('category_id'):
+            try:
+                _cid = ObjectId(str(obj.get('category_id')))
+                cdoc = db.categories.find_one({ '_id': _cid })
+                if cdoc:
+                    obj['category_name'] = cdoc.get('name', obj.get('category'))
+            except Exception:
+                pass
         if obj.get('invoice_id') and isinstance(obj['invoice_id'], ObjectId):
             obj['invoice_id'] = str(obj['invoice_id'])
             inv = db.invoices.find_one({ '_id': ObjectId(obj['invoice_id']) })
@@ -242,6 +297,20 @@ def list_tickets():
             # Indicate if invoice has an image
             if inv and inv.get('image_id'):
                 obj['invoice_has_image'] = True
+        # Company details
+        company_doc = None
+        _co = obj.get('company_id')
+        try:
+            _co_oid = _co if isinstance(_co, ObjectId) else ObjectId(str(_co))
+        except Exception:
+            _co_oid = None
+        if _co_oid:
+            company_doc = db.companies.find_one({ '_id': _co_oid })
+        if company_doc:
+            obj['company'] = {
+                'id': str(company_doc.get('_id')),
+                'name': company_doc.get('name', ''),
+            }
         # Convert image ObjectIds to strings for the API response
         if obj.get('initial_image_id') and isinstance(obj['initial_image_id'], ObjectId):
             obj['initial_image_id'] = str(obj['initial_image_id'])
@@ -316,8 +385,13 @@ def member_verify(ticket_id: str):
             company_oid = ObjectId(company_oid)
         except Exception:
             return { 'error': 'Unauthorized' }, 403
+    # Support created_by stored as email (legacy) or ObjectId (new)
     res = db.tickets.update_one(
-        { '_id': _oid, 'company_id': company_oid, 'created_by': email },
+        {
+            '_id': _oid,
+            'company_id': company_oid,
+            '$or': [ { 'created_by': email }, { 'created_by': user['_id'] } ]
+        },
         { '$set': { 'status': 'Accountant Processing' } }
     )
     if res.matched_count == 0:
