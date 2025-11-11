@@ -91,6 +91,7 @@ def create_ticket():
     category = (request.form.get('category') or '').strip().lower()
     category_id_raw = (request.form.get('category_id') or '').strip()
     description = (request.form.get('description') or '').strip()
+    priority_raw = (request.form.get('priority') or 'medium').strip().lower()
     image = request.files.get('image')
 
     if (not category and not category_id_raw) or not description:
@@ -138,6 +139,11 @@ def create_ticket():
         else:
             category_name = category
 
+    # Validate priority
+    PRIORITY_ALLOWED = {'urgent','medium','low'}
+    if priority_raw not in PRIORITY_ALLOWED:
+        priority_raw = 'medium'
+
     initial_image_id = None
     if image:
         try:
@@ -156,6 +162,7 @@ def create_ticket():
         'created_by': user['_id'],
         'created_at': now,
         'status': 'Submitted',
+        'priority': priority_raw,
         'initial_image_id': initial_image_id,
         'completion_image_ids': [],
         'assigned_provider': None,
@@ -222,6 +229,14 @@ def list_tickets():
     assigned_provider = request.args.get('assigned_provider', '').strip().lower()
     if assigned_provider:
         q['assigned_provider'] = assigned_provider
+    # Optional priority filter
+    priority_filter = request.args.get('priority', '').strip().lower()
+    if priority_filter:
+        priorities = [p.strip() for p in priority_filter.split(',') if p.strip()]
+        if len(priorities) == 1:
+            q['priority'] = priorities[0]
+        else:
+            q['priority'] = { '$in': priorities }
     
     created_by = request.args.get('created_by', '').strip().lower()
     if created_by:
@@ -311,6 +326,10 @@ def list_tickets():
                 'id': str(company_doc.get('_id')),
                 'name': company_doc.get('name', ''),
             }
+        # Ensure priority present (default medium for legacy)
+        if not obj.get('priority'):
+            obj['priority'] = 'medium'
+
         # Convert image ObjectIds to strings for the API response
         if obj.get('initial_image_id') and isinstance(obj['initial_image_id'], ObjectId):
             obj['initial_image_id'] = str(obj['initial_image_id'])
