@@ -74,7 +74,8 @@ def list_companies():
         '$or': [
             { 'company_id': { '$in': [company_id, str(company_id)] } },
             { 'company_ids': { '$in': [company_id, str(company_id)] } },
-        ]
+        ],
+        'role': { '$ne': 'serviceprovider' }
     }))
         
         user_list = []
@@ -114,7 +115,7 @@ def get_company(company_id: str):
         return {'error': 'Company not found'}, 404
     
     # Get users for this company
-    users = list(db.users.find({'company_id': _oid}))
+    users = list(db.users.find({'company_id': _oid, 'role': { '$ne': 'serviceprovider' }}))
     
     user_list = []
     for user in users:
@@ -194,8 +195,8 @@ def delete_company(company_id: str):
     except Exception:
         return {'error': 'Invalid company ID'}, 400
     
-    # Check if company has users
-    user_count = db.users.count_documents({'company_id': _oid})
+    # Check if company has users (exclude service providers)
+    user_count = db.users.count_documents({'company_id': _oid, 'role': { '$ne': 'serviceprovider' }})
     if user_count > 0:
         return {'error': f'Cannot delete company with {user_count} users. Remove users first.'}, 400
     
@@ -243,6 +244,9 @@ def add_user_to_company(company_id: str):
     valid_roles = ['user', 'admin', 'manager', 'serviceprovider', 'accountant']
     if role not in valid_roles:
         return {'error': f'Invalid role. Must be one of: {", ".join(valid_roles)}'}, 400
+    # Service providers are admin-controlled and not company-bound
+    if role == 'serviceprovider':
+        return {'error': 'Service providers cannot be created via company. Create them from the Users admin flow.'}, 400
     
     # Check if user already exists
     existing = db.users.find_one({'email': email})
